@@ -1,0 +1,11 @@
+# 统一换行符：源码保持 LF，批处理保持 CRLF
+* text=auto
+*.cpp text eol=lf
+*.h text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.in text eol=lf
+*.out text eol=lf
+*.bat text eol=crlf
+*.exe binary
+*.png binary

@@ -1,0 +1,20 @@
+# 编译产物
+build/
+build-cmake/
+build-debug/
+*.exe
+*.o
+*.obj
+*.a
+*.so
+*.dll
+
+# IDE / 编辑器
+.vscode/
+.idea/
+*.user
+*.suo
+
+# 系统文件
+Thumbs.db
+.DS_Store
