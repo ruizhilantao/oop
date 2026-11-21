@@ -9,7 +9,8 @@
 #include <string>
 #include <vector>
 
-// 主程序：只负责菜单、输入提示和结果显示，业务规则都交给 ActivityManager 与 Activity。
+// 主程序：只负责菜单、输入提示和结果显示。
+// 业务规则（尤其是各活动类型不同的报名规则）由 Activity 派生类的虚函数完成。
 namespace {
 
 // ==================== 菜单显示 ====================
@@ -30,7 +31,7 @@ void printUserMenu() {
 }
 
 void printActivityMenu() {
-    std::cout << "\n--- 发布 / 修改 / 删除活动 ---\n"
+    std::cout << "\n--- 活动管理 ---\n"
                  " 1. 发布新活动      2. 修改活动信息      3. 删除活动\n"
                  " 0. 返回上一级\n"
               << std::endl;
@@ -51,6 +52,7 @@ void printQueryMenu() {
                  " 1. 查询某活动的报名用户\n"
                  " 2. 查询某用户已报名的活动\n"
                  " 3. 按类型统计活动数量\n"
+                 " 4. 报名前试算（检查资格与费用，不改变数据）\n"
                  " 0. 返回上一级\n"
               << std::endl;
 }
@@ -69,12 +71,32 @@ bool readRequired(const std::string& prompt, const std::string& fieldName, std::
     return true;
 }
 
+// 读取参赛等级；直接回车表示使用 defaultValue。
+bool readLevel(const std::string& prompt, int defaultValue, int& level) {
+    std::string text;
+    if (!input::readLine(prompt, text)) {
+        return false;
+    }
+    if (text.empty()) {
+        level = defaultValue;
+        return true;
+    }
+    int parsed = 0;
+    if (!input::parseInt(text, parsed) || parsed < User::kMinLevel || parsed > User::kMaxLevel) {
+        std::cout << "输入无效：参赛等级必须是 " << User::kMinLevel << " ~ " << User::kMaxLevel
+                  << " 的整数，本次操作已取消。" << std::endl;
+        return false;
+    }
+    level = parsed;
+    return true;
+}
+
 // ==================== 显示辅助 ====================
 
-// 单个活动的完整信息 = 基类公共信息 + 本类型特有信息。
+// 单个活动的完整信息 = 基类公共信息 + 虚函数给出的特有信息 + 本类型报名规则。
 void printActivityDetail(const Activity& activity) {
-    std::cout << "  " << activity.describeCommon() << " | " << activitySpecificInfo(activity)
-              << std::endl;
+    std::cout << "  " << activity.describeCommon() << " | " << activity.specificInfo() << std::endl;
+    std::cout << "     报名规则: " << activity.ruleText() << std::endl;
 }
 
 void showUserList(const ActivityManager& manager) {
@@ -101,43 +123,34 @@ void showAllActivities(const ActivityManager& manager) {
     }
 }
 
-// 选择活动类型；0 或非法编号都会返回 false（非法编号额外给出提示）。
-bool readTypeChoice(ActivityType& type) {
-    printActivityTypeMenu();
-    std::string choice;
-    if (!input::readLine("请选择活动类型编号: ", choice)) {
-        return false;
-    }
-    if (choice == "1") {
-        type = ActivityType::Lecture;
-        return true;
-    }
-    if (choice == "2") {
-        type = ActivityType::Competition;
-        return true;
-    }
-    if (choice == "3") {
-        type = ActivityType::Sport;
-        return true;
-    }
-    if (!choice.empty() && choice != "0") {
-        std::cout << "无效的活动类型编号：" << choice << "，本次操作已取消。" << std::endl;
-    }
-    return false;
-}
-
+// 分类浏览：可选类型来自各活动的 typeName()，菜单里没有写死任何类型。
 void showActivitiesByType(const ActivityManager& manager) {
-    ActivityType type = ActivityType::Lecture;
-    if (!readTypeChoice(type)) {
+    const std::vector<std::string> names = manager.activityTypeNames();
+    if (names.empty()) {
+        std::cout << "当前没有活动记录。" << std::endl;
         return;
     }
-    std::vector<const Activity*> matched = manager.findActivitiesByType(type);
+    std::cout << "可选类型: ";
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        std::cout << (i + 1) << ". " << names[i] << "   ";
+    }
+    std::cout << "0. 返回" << std::endl;
+
+    int choice = 0;
+    if (!input::readIntInRange("请选择类型编号: ", 0, static_cast<int>(names.size()), choice)) {
+        return;
+    }
+    if (choice == 0) {
+        return;
+    }
+    const std::string& typeName = names[static_cast<std::size_t>(choice - 1)];
+
+    const std::vector<const Activity*> matched = manager.findActivitiesByTypeName(typeName);
     if (matched.empty()) {
-        std::cout << "当前没有" << activityTypeName(type) << "类活动。" << std::endl;
+        std::cout << "当前没有" << typeName << "类活动。" << std::endl;
         return;
     }
-    std::cout << "---- " << activityTypeName(type) << "类活动（共 " << matched.size() << " 个）----"
-              << std::endl;
+    std::cout << "---- " << typeName << "类活动（共 " << matched.size() << " 个）----" << std::endl;
     for (std::size_t i = 0; i < matched.size(); ++i) {
         printActivityDetail(*matched[i]);
     }
@@ -150,6 +163,8 @@ void createUser(ActivityManager& manager) {
     std::string name;
     std::string contact;
     std::string message;
+    int level = User::kMinLevel;
+
     if (!readRequired("用户编号: ", "用户编号", id)) {
         return;
     }
@@ -159,7 +174,10 @@ void createUser(ActivityManager& manager) {
     if (!readRequired("联系方式: ", "联系方式", contact)) {
         return;
     }
-    if (!manager.addUser(id, name, contact, message)) {
+    if (!readLevel("参赛等级 1~10（直接回车表示 1）: ", User::kMinLevel, level)) {
+        return;
+    }
+    if (!manager.addUser(id, name, contact, level, message)) {
         std::cout << "创建失败：" << message << std::endl;
         return;
     }
@@ -178,6 +196,7 @@ void modifyUser(ActivityManager& manager) {
     }
     const std::string oldName = existing->getName();
     const std::string oldContact = existing->getContact();
+    const int oldLevel = existing->getLevel();
     std::cout << "当前信息: " << existing->describe() << std::endl;
 
     std::string name;
@@ -188,6 +207,10 @@ void modifyUser(ActivityManager& manager) {
     if (!input::readLine("新的联系方式（直接回车表示不修改）: ", contact)) {
         return;
     }
+    int level = oldLevel;
+    if (!readLevel("新的参赛等级 1~10（直接回车表示不修改）: ", oldLevel, level)) {
+        return;
+    }
     if (name.empty()) {
         name = oldName;
     }
@@ -196,7 +219,7 @@ void modifyUser(ActivityManager& manager) {
     }
 
     std::string message;
-    if (!manager.modifyUser(id, name, contact, message)) {
+    if (!manager.modifyUser(id, name, contact, level, message)) {
         std::cout << "修改失败：" << message << std::endl;
         return;
     }
@@ -240,9 +263,57 @@ void handleUserMenu(ActivityManager& manager) {
 
 // ==================== 活动相关操作 ====================
 
+// 创建活动时的“工厂”：按菜单选择生成对应派生类对象。
+// 这里的分支只发生在**创建**时（用户选了什么类型就 new 什么类型），
+// 之后的所有行为都通过基类指针 + 虚函数完成，不再判断类型。
+Activity* createActivityByType(const std::string& typeChoice, const std::string& id,
+                               const std::string& name, const std::string& time,
+                               const std::string& place, int capacity) {
+    if (typeChoice == "1") {
+        std::string speaker;
+        if (!readRequired("主讲人: ", "主讲人", speaker)) {
+            return nullptr;
+        }
+        return new Lecture(id, name, time, place, capacity, speaker);
+    }
+    if (typeChoice == "2") {
+        std::string requirement;
+        if (!readRequired("参赛要求: ", "参赛要求", requirement)) {
+            return nullptr;
+        }
+        int requiredLevel = 1;
+        if (!input::readIntInRange("最低参赛等级 1~10: ", User::kMinLevel, User::kMaxLevel,
+                                   requiredLevel)) {
+            return nullptr;
+        }
+        int fee = 0;
+        if (!input::readIntInRange("报名费用（元，0 表示免费）: ", 0, 1000000, fee)) {
+            return nullptr;
+        }
+        return new Competition(id, name, time, place, capacity, requirement, requiredLevel, fee);
+    }
+    std::string sportName;
+    if (!readRequired("体育项目: ", "体育项目", sportName)) {
+        return nullptr;
+    }
+    int fee = 0;
+    if (!input::readIntInRange("固定费用（元，0 表示免费）: ", 0, 1000000, fee)) {
+        return nullptr;
+    }
+    return new Sport(id, name, time, place, capacity, sportName, fee);
+}
+
 void createActivity(ActivityManager& manager) {
-    ActivityType type = ActivityType::Lecture;
-    if (!readTypeChoice(type)) {
+    printActivityTypeMenu();
+    std::string typeChoice;
+    if (!input::readLine("请选择活动类型编号: ", typeChoice)) {
+        return;
+    }
+    if (typeChoice == "0") {
+        return;
+    }
+    if (typeChoice != "1" && typeChoice != "2" && typeChoice != "3") {
+        std::cout << "无效的活动类型编号：" << typeChoice << "，本次操作已取消。" << std::endl;
         return;
     }
 
@@ -262,31 +333,14 @@ void createActivity(ActivityManager& manager) {
     if (!readRequired("举办地点: ", "举办地点", place)) {
         return;
     }
-
     int capacity = 0;
     if (!input::readPositiveInt("活动容量: ", capacity)) {
         return;
     }
 
-    // 按类型补充特有信息，再创建对应的派生类对象。
-    // 三种派生对象都用 Activity* 接管，后面的报名、查询、删除逻辑完全共用。
-    std::string extra;
-    Activity* activity = nullptr;
-    if (type == ActivityType::Lecture) {
-        if (!readRequired("主讲人: ", "主讲人", extra)) {
-            return;
-        }
-        activity = new Lecture(id, name, time, place, capacity, extra);
-    } else if (type == ActivityType::Competition) {
-        if (!readRequired("参赛要求: ", "参赛要求", extra)) {
-            return;
-        }
-        activity = new Competition(id, name, time, place, capacity, extra);
-    } else {
-        if (!readRequired("体育项目: ", "体育项目", extra)) {
-            return;
-        }
-        activity = new Sport(id, name, time, place, capacity, extra);
+    Activity* activity = createActivityByType(typeChoice, id, name, time, place, capacity);
+    if (activity == nullptr) {
+        return;
     }
 
     std::string message;
@@ -302,19 +356,6 @@ void createActivity(ActivityManager& manager) {
     }
 }
 
-void deleteActivity(ActivityManager& manager) {
-    std::string id;
-    if (!readRequired("要删除的活动编号: ", "活动编号", id)) {
-        return;
-    }
-    std::string message;
-    if (!manager.removeActivity(id, message)) {
-        std::cout << "删除失败：" << message << std::endl;
-        return;
-    }
-    std::cout << message << std::endl;
-}
-
 // 修改活动的公共信息：编号不变，直接回车表示保留原值。
 void modifyActivity(ActivityManager& manager) {
     std::string id;
@@ -326,7 +367,7 @@ void modifyActivity(ActivityManager& manager) {
         std::cout << "修改失败：活动不存在：" << id << "（未做任何修改）。" << std::endl;
         return;
     }
-    std::cout << "当前信息: " << existing->describeCommon() << " | " << activitySpecificInfo(*existing)
+    std::cout << "当前信息: " << existing->describeCommon() << " | " << existing->specificInfo()
               << std::endl;
 
     const std::string oldName = existing->getName();
@@ -369,6 +410,19 @@ void modifyActivity(ActivityManager& manager) {
     std::string message;
     if (!manager.modifyActivity(id, name, time, place, capacity, message)) {
         std::cout << "修改失败：" << message << std::endl;
+        return;
+    }
+    std::cout << message << std::endl;
+}
+
+void deleteActivity(ActivityManager& manager) {
+    std::string id;
+    if (!readRequired("要删除的活动编号: ", "活动编号", id)) {
+        return;
+    }
+    std::string message;
+    if (!manager.removeActivity(id, message)) {
+        std::cout << "删除失败：" << message << std::endl;
         return;
     }
     std::cout << message << std::endl;
@@ -497,16 +551,13 @@ void showActivitiesOfUser(const ActivityManager& manager) {
 }
 
 void showStatistics(const ActivityManager& manager) {
-    const ActivityType types[] = {ActivityType::Lecture, ActivityType::Competition,
-                                  ActivityType::Sport};
-    const int typeCount = static_cast<int>(sizeof(types) / sizeof(types[0]));
-
     std::cout << "---- 活动统计 ----" << std::endl;
+    const std::vector<std::string> names = manager.activityTypeNames();
     int total = 0;
-    for (int i = 0; i < typeCount; ++i) {
-        const int count = manager.countActivitiesByType(types[i]);
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        const int count = manager.countActivitiesByTypeName(names[i]);
         total += count;
-        std::cout << "  " << activityTypeName(types[i]) << "类活动: " << count << " 个" << std::endl;
+        std::cout << "  " << names[i] << "类活动: " << count << " 个" << std::endl;
     }
     std::cout << "  活动总数: " << total << " 个；用户总数: " << manager.getUsers().size() << " 人"
               << std::endl;
@@ -517,11 +568,27 @@ void showStatistics(const ActivityManager& manager) {
         std::cout << "  各活动报名情况:" << std::endl;
         for (std::size_t i = 0; i < activities.size(); ++i) {
             std::cout << "    [" << activities[i]->getId() << "] " << activities[i]->getName()
+                      << "（" << activities[i]->typeName() << "）"
                       << " 已报名 " << activities[i]->getRegisteredCount() << "/"
                       << activities[i]->getCapacity() << "，报名记录 "
                       << activities[i]->getRegistrants().size() << " 条" << std::endl;
         }
     }
+}
+
+// 报名前试算：调用虚函数做规则检查，但不写任何记录（可反复调用得到相同结果）。
+void doPreview(const ActivityManager& manager) {
+    std::string userId;
+    std::string activityId;
+    if (!readRequired("试算用户编号: ", "用户编号", userId)) {
+        return;
+    }
+    if (!readRequired("试算活动编号: ", "活动编号", activityId)) {
+        return;
+    }
+    std::string message;
+    manager.previewRegistration(userId, activityId, message);
+    std::cout << "检查结果：" << message << std::endl;
 }
 
 void handleQueryMenu(ActivityManager& manager) {
@@ -537,6 +604,8 @@ void handleQueryMenu(ActivityManager& manager) {
             showActivitiesOfUser(manager);
         } else if (choice == "3") {
             showStatistics(manager);
+        } else if (choice == "4") {
+            doPreview(manager);
         } else {
             std::cout << "无效的菜单编号：" << choice << "，请重新输入。" << std::endl;
         }
@@ -548,7 +617,7 @@ void handleQueryMenu(ActivityManager& manager) {
 
 int main() {
     ActivityManager manager;
-    std::cout << "欢迎使用校园活动组织与协同平台（第 4 次上机版本：多类型活动）" << std::endl;
+    std::cout << "欢迎使用校园活动组织与协同平台（第 5 次上机版本：不同活动规则）" << std::endl;
 
     printMainMenu();
     std::string choice;

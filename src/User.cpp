@@ -1,10 +1,10 @@
 #include "User.h"
 
-User::User() {
+User::User() : level_(kMinLevel) {
 }
 
-User::User(const std::string& id, const std::string& name, const std::string& contact)
-    : id_(id), name_(name), contact_(contact) {
+User::User(const std::string& id, const std::string& name, const std::string& contact, int level)
+    : id_(id), name_(name), contact_(contact), level_(level) {
 }
 
 const std::string& User::getId() const {
@@ -17,6 +17,10 @@ const std::string& User::getName() const {
 
 const std::string& User::getContact() const {
     return contact_;
+}
+
+int User::getLevel() const {
+    return level_;
 }
 
 bool User::setName(const std::string& name) {
@@ -35,6 +39,15 @@ bool User::setContact(const std::string& contact) {
     return true;
 }
 
+bool User::setLevel(int level) {
+    if (level < kMinLevel || level > kMaxLevel) {
+        return false;  // 等级越界：拒绝，保持原值
+    }
+    level_ = level;
+    return true;
+}
+
 std::string User::describe() const {
-    return "[" + id_ + "] " + name_ + " | 联系方式: " + contact_;
+    return "[" + id_ + "] " + name_ + " | 联系方式: " + contact_ + " | 等级: " +
+           std::to_string(level_);
 }

@@ -91,7 +91,7 @@ bool readInt(const std::string& prompt, int& value) {
     }
 }
 
-bool readPositiveInt(const std::string& prompt, int& value) {
+bool readIntInRange(const std::string& prompt, int minValue, int maxValue, int& value) {
     std::string line;
     while (true) {
         if (!readLine(prompt, line)) {
@@ -99,16 +99,21 @@ bool readPositiveInt(const std::string& prompt, int& value) {
         }
         int parsed = 0;
         if (!parseInt(line, parsed)) {
-            std::cout << "输入格式错误：请输入一个正整数。" << std::endl;
+            std::cout << "输入格式错误：请输入一个整数。" << std::endl;
             continue;
         }
-        if (parsed <= 0) {
-            std::cout << "输入无效：容量必须是正整数（大于 0）。" << std::endl;
+        if (parsed < minValue || parsed > maxValue) {
+            std::cout << "输入无效：请输入 " << minValue << " ~ " << maxValue << " 之间的整数。"
+                      << std::endl;
             continue;
         }
         value = parsed;
         return true;
     }
+}
+
+bool readPositiveInt(const std::string& prompt, int& value) {
+    return readIntInRange(prompt, 1, 2147483647, value);
 }
 
 }  // namespace input

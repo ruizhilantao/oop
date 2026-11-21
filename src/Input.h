@@ -22,6 +22,9 @@ bool parseInt(const std::string& text, int& value);
 // 读取整数：格式错误时提示并重试，不会退出程序；遇到 EOF 返回 false。
 bool readInt(const std::string& prompt, int& value);
 
+// 读取 [minValue, maxValue] 闭区间内的整数：格式错误或越界时提示并重试；遇到 EOF 返回 false。
+bool readIntInRange(const std::string& prompt, int minValue, int maxValue, int& value);
+
 // 读取正整数：格式错误或非正数时提示并重试；遇到 EOF 返回 false。
 bool readPositiveInt(const std::string& prompt, int& value);
 

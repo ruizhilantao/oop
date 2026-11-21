@@ -7,6 +7,7 @@ ActivityManager::ActivityManager() {
 
 ActivityManager::~ActivityManager() {
     // 管理器是这些活动对象的唯一所有者，析构时统一释放。
+    // 因为基类析构函数是虚函数，派生部分的成员也会被正确释放。
     for (std::size_t i = 0; i < activities_.size(); ++i) {
         delete activities_[i];
     }
@@ -38,7 +39,7 @@ const User* ActivityManager::findUser(const std::string& id) const {
 }
 
 bool ActivityManager::addUser(const std::string& id, const std::string& name,
-                              const std::string& contact, std::string& message) {
+                              const std::string& contact, int level, std::string& message) {
     if (id.empty()) {
         message = "用户编号不能为空。";
         return false;
@@ -55,13 +56,17 @@ bool ActivityManager::addUser(const std::string& id, const std::string& name,
         message = "联系方式不能为空。";
         return false;
     }
-    users_.push_back(User(id, name, contact));
+    if (level < User::kMinLevel || level > User::kMaxLevel) {
+        message = "参赛等级必须在 1 ~ 10 之间。";
+        return false;
+    }
+    users_.push_back(User(id, name, contact, level));
     message = "用户创建成功：" + users_.back().describe();
     return true;
 }
 
 bool ActivityManager::modifyUser(const std::string& id, const std::string& name,
-                                 const std::string& contact, std::string& message) {
+                                 const std::string& contact, int level, std::string& message) {
     User* user = findUser(id);
     if (user == nullptr) {
         message = "用户不存在：" + id + "（未做任何修改）。";
@@ -75,9 +80,14 @@ bool ActivityManager::modifyUser(const std::string& id, const std::string& name,
         message = "联系方式不能为空（未做任何修改）。";
         return false;
     }
+    if (level < User::kMinLevel || level > User::kMaxLevel) {
+        message = "参赛等级必须在 1 ~ 10 之间（未做任何修改）。";
+        return false;
+    }
     // 编号保持不变：这里只修改允许变更的字段。
     user->setName(name);
     user->setContact(contact);
+    user->setLevel(level);
     message = "修改成功：" + user->describe();
     return true;
 }
@@ -208,20 +218,40 @@ bool ActivityManager::removeActivity(const std::string& id, std::string& message
     return false;
 }
 
-std::vector<const Activity*> ActivityManager::findActivitiesByType(ActivityType type) const {
+std::vector<std::string> ActivityManager::activityTypeNames() const {
+    // 类型名全部来自各活动的虚函数 typeName()，这里只做去重，不知道一共有几种类型。
+    std::vector<std::string> names;
+    for (std::size_t i = 0; i < activities_.size(); ++i) {
+        const std::string name = activities_[i]->typeName();
+        bool exists = false;
+        for (std::size_t j = 0; j < names.size(); ++j) {
+            if (names[j] == name) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            names.push_back(name);
+        }
+    }
+    return names;
+}
+
+std::vector<const Activity*> ActivityManager::findActivitiesByTypeName(
+    const std::string& typeName) const {
     std::vector<const Activity*> matched;
     for (std::size_t i = 0; i < activities_.size(); ++i) {
-        if (activities_[i]->getType() == type) {
+        if (activities_[i]->typeName() == typeName) {
             matched.push_back(activities_[i]);
         }
     }
     return matched;
 }
 
-int ActivityManager::countActivitiesByType(ActivityType type) const {
+int ActivityManager::countActivitiesByTypeName(const std::string& typeName) const {
     int count = 0;
     for (std::size_t i = 0; i < activities_.size(); ++i) {
-        if (activities_[i]->getType() == type) {
+        if (activities_[i]->typeName() == typeName) {
             ++count;
         }
     }
@@ -230,9 +260,33 @@ int ActivityManager::countActivitiesByType(ActivityType type) const {
 
 // ==================== 报名 ====================
 
+bool ActivityManager::previewRegistration(const std::string& userId,
+                                          const std::string& activityId,
+                                          std::string& message) const {
+    const User* user = findUser(userId);
+    if (user == nullptr) {
+        message = "用户不存在：" + userId;
+        return false;
+    }
+    const Activity* activity = findActivity(activityId);
+    if (activity == nullptr) {
+        message = "活动不存在：" + activityId;
+        return false;
+    }
+    if (activity->hasRegistrant(userId)) {
+        message = "该用户已经报名此活动，无需再检查。";
+        return false;
+    }
+    // 虚函数调用：具体用哪套规则由活动对象的实际类型决定，这里不做任何类型判断。
+    const RegistrationCheck check = activity->checkRegistration(*user);
+    message = describeCheckResult(check);
+    return check.allowed;
+}
+
 bool ActivityManager::registerForActivity(const std::string& userId,
                                           const std::string& activityId, std::string& message) {
-    if (findUser(userId) == nullptr) {
+    const User* user = findUser(userId);
+    if (user == nullptr) {
         message = "报名失败：用户不存在：" + userId;
         return false;
     }
@@ -241,18 +295,21 @@ bool ActivityManager::registerForActivity(const std::string& userId,
         message = "报名失败：活动不存在：" + activityId;
         return false;
     }
-
-    const RegisterResult result = activity->registerUser(userId);
-    if (result == RegisterResult::AlreadyRegistered) {
+    if (activity->hasRegistrant(userId)) {
         message = "报名失败：该用户已经报名活动 " + activityId + "，不能重复报名。";
         return false;
     }
-    if (result == RegisterResult::FullActivity) {
-        message = "报名失败：活动 " + activityId + " 已满员（容量 " +
-                  std::to_string(activity->getCapacity()) + "）。";
+
+    // 多态：同一行代码对讲座/竞赛/体育会执行不同的规则检查。
+    const RegistrationCheck check = activity->checkRegistration(*user);
+    if (!check.allowed) {
+        // 拒绝时只返回结果，不修改报名记录和人数。
+        message = "报名失败：" + describeCheckResult(check);
         return false;
     }
-    message = "报名成功：活动 " + activityId + " 当前已报名 " +
+
+    activity->addRegistrant(userId);
+    message = "报名成功：" + describeCheckResult(check) + " | 活动 " + activityId + " 当前已报名 " +
               std::to_string(activity->getRegisteredCount()) + "/" +
               std::to_string(activity->getCapacity()) + " 人。";
     return true;

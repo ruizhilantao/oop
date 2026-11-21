@@ -1,72 +1,84 @@
 #ifndef ACTIVITY_H
 #define ACTIVITY_H
 
+#include "User.h"
+
 #include <string>
 #include <vector>
 
-// 活动类型。第四次上机新增：活动不再是单一形态，而是由基类 + 派生类构成。
-enum class ActivityType { Lecture, Competition, Sport };
+// 一次报名检查的完整结果。
+// 各派生类按自己的规则填好它，界面层直接显示即可，不需要再判断活动类型。
+struct RegistrationCheck {
+    bool allowed = false;       // 是否允许报名
+    int fee = 0;                // 本次报名费用（元）
+    std::string rule;           // 本次采用的规则说明
+    std::string qualification;  // 资格检查结论
+    std::string reason;         // 拒绝原因（allowed == false 时有效）
+};
 
-// 类型的中文名称，用于菜单、列表和统计显示。
-std::string activityTypeName(ActivityType type);
+// 把检查结果拼成一行可显示的文本（允许/拒绝、规则、资格、费用、原因）。
+std::string describeCheckResult(const RegistrationCheck& check);
 
-// 报名结果。把“重复报名 / 已满员 / 未报名”的判断集中到 Activity 内部，
-// 调用处不必重复判断，也不会出现两处规则不一致的问题。
-enum class RegisterResult { Success, AlreadyRegistered, FullActivity };
-
-// 活动基类：抽取所有活动共有的字段（编号、名称、时间、地点、容量）和共有行为
-// （容量判断、报名人数统计、报名 / 取消报名）。
-// 派生类只需要补充本类型的特有信息，公共逻辑全部复用基类实现。
+// 活动基类：保存公共字段与报名记录，并把“各类型不同的部分”交给虚函数实现。
+//
+// 第 5 次上机的改造要点：
+//   1. 原来按类型 switch 的 activitySpecificInfo() 被删除，改成纯虚函数 specificInfo()；
+//   2. 新增 ruleText() 与 checkRegistration()，由派生类实现各自的报名规则；
+//   3. 所有对活动行为的调用（显示特有信息、显示规则、检查报名）都通过基类指针/引用完成，
+//      代码里不再出现“先判断类型再分支”的集中式类型判断。
 class Activity {
 public:
     Activity(const std::string& id, const std::string& name, const std::string& time,
-             const std::string& place, int capacity, ActivityType type);
-    // 派生对象由基类指针统一释放，所以析构函数必须是虚函数（避免派生部分不析构）。
+             const std::string& place, int capacity);
     virtual ~Activity();
 
+    // ---------- 由派生类实现的多态接口 ----------
+    virtual std::string typeName() const = 0;      // 类型名，如“讲座”
+    virtual std::string specificInfo() const = 0;  // 本类型特有信息
+    virtual std::string ruleText() const = 0;      // 本类型的报名规则说明
+
+    // 按本类型规则检查一次报名。
+    // 只读：不修改报名记录，相同输入条件下多次调用结果完全一致。
+    virtual RegistrationCheck checkRegistration(const User& user) const;
+
+    // ---------- 公共字段访问 ----------
     const std::string& getId() const;
     const std::string& getName() const;
     const std::string& getTime() const;
     const std::string& getPlace() const;
     int getCapacity() const;
-    ActivityType getType() const;
 
-    // 已报名人数直接由报名记录算出，没有单独的人数计数器，因此不会出现“人数与记录不一致”。
+    // 已报名人数直接由报名记录算出，没有单独计数器，因此不会与记录不一致。
     int getRegisteredCount() const;
     const std::vector<std::string>& getRegistrants() const;
 
     bool isFull() const;
     bool hasRegistrant(const std::string& userId) const;
 
-    // 修改允许变更的公共信息（编号不可修改）。
-    // 名称/时间/地点不能为空；容量必须为正且不小于已报名人数，否则整体不修改并返回 false。
-    // 该检查写在类内部，保证无论谁调用都不会把容量改到比已报名人数还小。
-    bool updateBasicInfo(const std::string& name, const std::string& time,
-                         const std::string& place, int capacity);
-
-    // 报名 / 取消报名：容量、重复报名等规则都在基类实现，所有活动类型共用。
-    RegisterResult registerUser(const std::string& userId);
+    // 检查通过后由 ActivityManager 调用，写入报名记录。
+    bool addRegistrant(const std::string& userId);
+    // 取消报名：没有记录时返回 false，集合保持不变。
     bool unregisterUser(const std::string& userId);
 
     // 公共信息的单行显示（编号、名称、类型、时间、地点、容量、已报名人数）。
     std::string describeCommon() const;
 
+    // 修改允许变更的公共信息（编号不可修改）。
+    // 名称/时间/地点不能为空；容量必须为正且不小于已报名人数，否则整体不修改并返回 false。
+    bool updateBasicInfo(const std::string& name, const std::string& time,
+                         const std::string& place, int capacity);
+
 protected:
-    // 派生类要读取公共信息拼出“完整信息”，因此把公共字段放在 protected。
+    // 派生类要读取公共信息拼出完整信息，因此公共字段放在 protected。
     std::string id_;
     std::string name_;
     std::string time_;
     std::string place_;
     int capacity_;
-    ActivityType type_;
 
 private:
-    // 只存报名用户的编号，不存 User 指针：
-    // 一是避免用户对象销毁后出现野指针，二是保证报名关系只有这一份数据来源。
+    // 只存报名用户的编号：避免用户对象销毁后出现野指针，也保证报名关系只有一份来源。
     std::vector<std::string> registrants_;
 };
-
-// 显示本类型特有信息的文本（讲座主讲人 / 竞赛参赛要求 / 体育项目）。
-std::string activitySpecificInfo(const Activity& activity);
 
 #endif

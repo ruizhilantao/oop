@@ -11,7 +11,7 @@ if not exist build\CampusActivity.exe (
     exit /b 1
 )
 
-for %%t in (T1_types T2_base_interface T3_regression robustness) do (
+for %%t in (T1_lecture_rule T2_competition_rule T3_polymorphic_collection T4_regression robustness) do (
     echo === Running %%t ===
     build\CampusActivity.exe < test\%%t.in > test\%%t.out 2>&1
     if errorlevel 1 (

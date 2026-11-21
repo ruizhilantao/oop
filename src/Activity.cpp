@@ -1,30 +1,46 @@
 #include "Activity.h"
 
-#include "Competition.h"
-#include "Lecture.h"
-#include "Sport.h"
-
 #include <cstddef>
 #include <sstream>
 
-std::string activityTypeName(ActivityType type) {
-    switch (type) {
-        case ActivityType::Lecture:
-            return "讲座";
-        case ActivityType::Competition:
-            return "竞赛";
-        case ActivityType::Sport:
-            return "体育";
+std::string describeCheckResult(const RegistrationCheck& check) {
+    std::ostringstream out;
+    out << (check.allowed ? "允许报名" : "拒绝报名");
+    out << " | 规则: " << check.rule;
+    out << " | 资格: " << check.qualification;
+    out << " | 费用: " << check.fee << " 元";
+    if (!check.allowed && !check.reason.empty()) {
+        out << " | 原因: " << check.reason;
     }
-    return "未知";
+    return out.str();
 }
 
 Activity::Activity(const std::string& id, const std::string& name, const std::string& time,
-                   const std::string& place, int capacity, ActivityType type)
-    : id_(id), name_(name), time_(time), place_(place), capacity_(capacity), type_(type) {
+                   const std::string& place, int capacity)
+    : id_(id), name_(name), time_(time), place_(place), capacity_(capacity) {
 }
 
 Activity::~Activity() {
+}
+
+// 基类只负责所有活动都有的规则：剩余容量。
+// 派生类在自己的 checkRegistration() 里先调用它，再追加本类型的规则，
+// 因此“容量检查”只有一份实现，不会在各类型里重复。
+RegistrationCheck Activity::checkRegistration(const User&) const {
+    RegistrationCheck check;
+    check.rule = ruleText();  // 虚函数：调用当前活动类型自己的规则文本
+    check.qualification = "无需资格检查";
+
+    if (isFull()) {
+        check.allowed = false;
+        check.reason = "名额已满：活动 " + id_ + " 已报名 " + std::to_string(getRegisteredCount()) +
+                       "/" + std::to_string(capacity_) + " 人";
+        return check;
+    }
+
+    check.allowed = true;
+    check.fee = 0;
+    return check;
 }
 
 const std::string& Activity::getId() const {
@@ -45,10 +61,6 @@ const std::string& Activity::getPlace() const {
 
 int Activity::getCapacity() const {
     return capacity_;
-}
-
-ActivityType Activity::getType() const {
-    return type_;
 }
 
 int Activity::getRegisteredCount() const {
@@ -72,30 +84,12 @@ bool Activity::hasRegistrant(const std::string& userId) const {
     return false;
 }
 
-bool Activity::updateBasicInfo(const std::string& name, const std::string& time,
-                               const std::string& place, int capacity) {
-    if (name.empty() || time.empty() || place.empty()) {
-        return false;
-    }
-    if (capacity <= 0 || capacity < getRegisteredCount()) {
-        return false;  // 容量不能小于已报名人数，否则人数与容量会互相矛盾
-    }
-    name_ = name;
-    time_ = time;
-    place_ = place;
-    capacity_ = capacity;
-    return true;
-}
-
-RegisterResult Activity::registerUser(const std::string& userId) {
-    if (hasRegistrant(userId)) {
-        return RegisterResult::AlreadyRegistered;  // 同一用户不能重复报名同一活动
-    }
-    if (isFull()) {
-        return RegisterResult::FullActivity;  // 满员后不再接受报名
+bool Activity::addRegistrant(const std::string& userId) {
+    if (userId.empty() || hasRegistrant(userId)) {
+        return false;  // 重复报名不能写入第二条记录
     }
     registrants_.push_back(userId);
-    return RegisterResult::Success;
+    return true;
 }
 
 bool Activity::unregisterUser(const std::string& userId) {
@@ -111,7 +105,7 @@ bool Activity::unregisterUser(const std::string& userId) {
 std::string Activity::describeCommon() const {
     std::ostringstream out;
     out << "[" << id_ << "] " << name_
-        << " | 类型: " << activityTypeName(type_)
+        << " | 类型: " << typeName()
         << " | 时间: " << time_
         << " | 地点: " << place_
         << " | 容量: " << capacity_
@@ -119,17 +113,17 @@ std::string Activity::describeCommon() const {
     return out.str();
 }
 
-std::string activitySpecificInfo(const Activity& activity) {
-    // type_ 在派生类构造时就被固定，因此按类型向下转型是安全的。
-    // 显示特有信息是第四次上机的需求；第五次上机会把这里的分支改成虚函数，
-    // 让基类指针自己完成“显示本类型信息”。
-    switch (activity.getType()) {
-        case ActivityType::Lecture:
-            return "主讲人: " + static_cast<const Lecture&>(activity).getSpeaker();
-        case ActivityType::Competition:
-            return "参赛要求: " + static_cast<const Competition&>(activity).getRequirement();
-        case ActivityType::Sport:
-            return "体育项目: " + static_cast<const Sport&>(activity).getSportName();
+bool Activity::updateBasicInfo(const std::string& name, const std::string& time,
+                               const std::string& place, int capacity) {
+    if (name.empty() || time.empty() || place.empty()) {
+        return false;
     }
-    return "";
+    if (capacity <= 0 || capacity < getRegisteredCount()) {
+        return false;  // 容量不能小于已报名人数，否则人数与容量会互相矛盾
+    }
+    name_ = name;
+    time_ = time;
+    place_ = place;
+    capacity_ = capacity;
+    return true;
 }
