@@ -9,3 +9,6 @@
 *.bat text eol=crlf
 *.exe binary
 *.png binary
+# 测试输出是程序在 Windows 文本模式下生成的（含 CRLF），按原样保存，不做换行符转换，
+# 这样重新跑测试后内容不变时 git status 保持干净。
+*.out -text
